@@ -6,33 +6,19 @@ import os
 
 news_bp = Blueprint('news', __name__)
 
-# Global variables for model
+# Global variables for model and vectorizer
 model = None
 vectorizer = None
 
 def preprocess_text(text):
     """
-    EXACT preprocessing from training code
-    Must match training exactly!
+    Clean and preprocess text data (EXACT SAME AS TRAINING)
     """
-    text = str(text).lower()
-    
-    # Remove URLs
+    text = text.lower()
     text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
-    
-    # Remove Reuters prefix (specific to ISOT dataset)
-    text = re.sub(r'\(reuters\)\s*-\s*', '', text)
-    text = re.sub(r'^[A-Z\s]+\(reuters\)', '', text)
-    
-    # Remove mentions and hashtags
     text = re.sub(r'\@\w+|\#','', text)
-    
-    # Remove punctuation
     text = text.translate(str.maketrans('', '', string.punctuation))
-    
-    # Remove extra whitespace
     text = ' '.join(text.split())
-    
     return text
 
 def load_models():
@@ -52,11 +38,13 @@ def load_models():
         with open(vectorizer_path, 'rb') as f:
             vectorizer = pickle.load(f)
         
-        print(f"✅ Fake News Detection model loaded successfully!")
+        print("✅ Fake News Detection model loaded successfully!")
         print(f"✅ Vectorizer features: {len(vectorizer.vocabulary_)}")
         
     except Exception as e:
         print(f"❌ Error loading model: {e}")
+        import traceback
+        traceback.print_exc()
         model = None
         vectorizer = None
 
@@ -65,42 +53,30 @@ load_models()
 
 @news_bp.route('/', methods=['GET'])
 def home():
-    """API documentation"""
+    """Home route - API status"""
     return jsonify({
-        'service': 'Fake News Detection API',
+        'status': 'running',
+        'message': 'Fake News Detection API',
         'model': 'Logistic Regression + TF-IDF',
         'accuracy': '~94%',
         'endpoints': {
-            'predict': {
-                'url': '/predict',
-                'method': 'POST',
-                'body': {
-                    'text': 'News article text to analyze'
-                },
-                'example': {
-                    'text': 'Breaking: Scientists discover aliens on Mars!'
-                }
-            },
-            'health': {
-                'url': '/health',
-                'method': 'GET'
-            }
+            '/predict': 'POST - Detect fake news',
+            '/health': 'GET - Health check'
         }
     })
 
 @news_bp.route('/health', methods=['GET'])
 def health():
-    """Health check"""
+    """Health check endpoint"""
     return jsonify({
-        'status': 'healthy',
-        'service': 'fake_news_detection',
+        'status': 'healthy', 
         'model_loaded': model is not None,
         'vectorizer_loaded': vectorizer is not None
     })
 
 @news_bp.route('/predict', methods=['POST'])
 def predict():
-    """Predict if news is fake or real"""
+    """Predict if news article is fake or real"""
     try:
         # Check if models are loaded
         if model is None or vectorizer is None:
@@ -108,49 +84,48 @@ def predict():
                 'error': 'Model not loaded. Please restart the service.'
             }), 500
         
-        # Get request data
+        # Get the article text from request
         data = request.get_json()
         
-        if not data:
-            return jsonify({'error': 'No JSON data received'}), 400
+        if not data or 'text' not in data:
+            return jsonify({
+                'error': 'Please provide text in JSON body: {"text": "your article..."}'
+            }), 400
         
-        # Get text
-        text = data.get('text', '').strip()
+        article_text = data['text']
         
-        if not text:
-            return jsonify({'error': 'Missing "text" field or empty text'}), 400
+        # Check if text is too short
+        if len(article_text.strip()) < 10:
+            return jsonify({
+                'error': 'Article text too short. Please provide at least 10 characters.'
+            }), 400
         
-        # Preprocess text (MUST match training!)
-        cleaned_text = preprocess_text(text)
+        # Preprocess the text (EXACT SAME AS LOCAL)
+        cleaned_text = preprocess_text(article_text)
         
-        # Transform using vectorizer
-        text_vectorized = vectorizer.transform([cleaned_text])
+        # Vectorize the text
+        text_vector = vectorizer.transform([cleaned_text])
         
-        # Predict
-        prediction = model.predict(text_vectorized)[0]
-        probabilities = model.predict_proba(text_vectorized)[0]
+        # Make prediction
+        prediction = model.predict(text_vector)[0]
+        prediction_proba = model.predict_proba(text_vector)[0]
         
-        # Get confidence
-        confidence = float(max(probabilities))
-        
-        # Result
+        # Prepare response (EXACT SAME AS LOCAL)
         result = {
-            'prediction': 'Real' if prediction == 1 else 'Fake',
-            'confidence': round(confidence * 100, 2),
-            'probabilities': {
-                'fake': round(float(probabilities[0]) * 100, 2),
-                'real': round(float(probabilities[1]) * 100, 2)
+            'prediction': 'Real News' if prediction == 1 else 'Fake News',
+            'label': int(prediction),
+            'confidence': {
+                'fake': round(float(prediction_proba[0]) * 100, 2),
+                'real': round(float(prediction_proba[1]) * 100, 2)
             },
-            'text_preview': text[:100] + ('...' if len(text) > 100 else '')
+            'text_length': len(article_text),
+            'cleaned_text_preview': cleaned_text[:100] + '...' if len(cleaned_text) > 100 else cleaned_text
         }
         
         return jsonify(result)
-        
+    
     except Exception as e:
         print(f"❌ Prediction error: {str(e)}")
         import traceback
         traceback.print_exc()
-        return jsonify({
-            'error': 'Prediction failed',
-            'details': str(e)
-        }), 500
+        return jsonify({'error': str(e)}), 500
