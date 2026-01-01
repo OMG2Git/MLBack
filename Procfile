@@ -1,1 +1,1 @@
-web: gunicorn app:app --timeout 120 --workers 2
+web: python -m spacy download en_core_web_sm && gunicorn app:app --timeout 120 --workers 2
